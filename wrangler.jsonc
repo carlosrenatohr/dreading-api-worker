@@ -6,6 +6,7 @@
   "observability": { "enabled": true },
   "ai": { "binding": "AI" },
   "r2_buckets": [{ "binding": "IMAGES", "bucket_name": "dreading-images" }],
+  "analytics_engine_datasets": [{ "binding": "ANALYTICS", "dataset": "dreading_events" }],
   "d1_databases": [
     {
       "binding": "DB",

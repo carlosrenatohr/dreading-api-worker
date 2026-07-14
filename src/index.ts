@@ -11,6 +11,7 @@ interface Env {
   INGEST_TOKEN?: string;
   AI?: Ai;
   IMAGES?: R2Bucket;
+  ANALYTICS?: AnalyticsEngineDataset;
 }
 
 const COLS =
@@ -19,6 +20,16 @@ const COLS =
 const app = new Hono<{ Bindings: Env }>();
 
 app.use('/api/*', cors());
+
+// Count each reading request (endpoint + country) in Workers Analytics Engine —
+// before the cache middleware so cache hits are still counted. Privacy-first:
+// no PII, just aggregate usage.
+app.use('/api/v1/readings/*', async (c, next) => {
+  const country = (c.req.raw as any).cf?.country || 'XX';
+  const endpoint = new URL(c.req.url).pathname;
+  c.env.ANALYTICS?.writeDataPoint({ blobs: [endpoint, country], doubles: [1], indexes: [endpoint] });
+  await next();
+});
 
 // Cache read responses at the edge (Cache API — free, cuts D1 reads). Content is
 // daily, so a short TTL is plenty; the daily write refreshes within the window.
