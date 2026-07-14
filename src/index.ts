@@ -3,10 +3,12 @@ import { cors } from 'hono/cors';
 import { z } from 'zod';
 
 import { isYmd, clampPerPage, pageNum, cutoffFrom, rowToReading, readingToRow } from './lib';
+import { enrichReading } from './enrich';
 
 interface Env {
   DB: D1Database;
   INGEST_TOKEN?: string;
+  AI?: Ai;
 }
 
 const COLS =
@@ -97,7 +99,10 @@ app.post('/api/ingest', async (c) => {
   if (!parsed.success) {
     return c.json({ message: 'Invalid reading', errors: parsed.error.flatten().fieldErrors }, 422);
   }
-  const row = readingToRow(parsed.data);
+  // Enrich at the edge via the Workers AI binding (no external token). The
+  // scraper posts the raw reading; the Worker adds the reflection/kids/etc.
+  const reading = await enrichReading(c.env.AI as any, parsed.data);
+  const row = readingToRow(reading);
   await c.env.DB.prepare(
     `INSERT INTO readings (date_raw, title, date_title, lecturas, message, reflection, kids_reflection, questions, image_url, source_version)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
