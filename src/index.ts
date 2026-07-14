@@ -9,6 +9,7 @@ interface Env {
   DB: D1Database;
   INGEST_TOKEN?: string;
   AI?: Ai;
+  IMAGES?: R2Bucket;
 }
 
 const COLS =
@@ -101,7 +102,9 @@ app.post('/api/ingest', async (c) => {
   }
   // Enrich at the edge via the Workers AI binding (no external token). The
   // scraper posts the raw reading; the Worker adds the reflection/kids/etc.
-  const reading = await enrichReading(c.env.AI as any, parsed.data);
+  // and a generated illustration stored in R2.
+  const origin = new URL(c.req.url).origin;
+  const reading = await enrichReading(c.env.AI as any, parsed.data, { images: c.env.IMAGES as any, origin });
   const row = readingToRow(reading);
   await c.env.DB.prepare(
     `INSERT INTO readings (date_raw, title, date_title, lecturas, message, reflection, kids_reflection, questions, image_url, source_version)
@@ -114,6 +117,19 @@ app.post('/api/ingest', async (c) => {
     .bind(row.date_raw, row.title, row.date_title, row.lecturas, row.message, row.reflection, row.kids_reflection, row.questions, row.image_url, row.source_version)
     .run();
   return c.json({ ok: true, date_raw: row.date_raw });
+});
+
+// Serve the daily illustrations stored in R2, cached at the edge.
+app.get('/images/:key', async (c) => {
+  if (!c.env.IMAGES) return c.notFound();
+  const obj = await c.env.IMAGES.get(c.req.param('key'));
+  if (!obj) return c.notFound();
+  return new Response(obj.body, {
+    headers: {
+      'content-type': obj.httpMetadata?.contentType || 'image/png',
+      'cache-control': 'public, max-age=86400',
+    },
+  });
 });
 
 export default app;
