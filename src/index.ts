@@ -12,6 +12,7 @@ interface Env {
   AI?: Ai;
   IMAGES?: R2Bucket;
   ANALYTICS?: AnalyticsEngineDataset;
+  ADMIN_KEY?: string;
 }
 
 const COLS =
@@ -134,6 +135,72 @@ app.post('/api/ingest', async (c) => {
     .bind(row.date_raw, row.title, row.date_title, row.lecturas, row.message, row.reflection, row.kids_reflection, row.questions, row.image_url, row.source_version)
     .run();
   return c.json({ ok: true, date_raw: row.date_raw });
+});
+
+// Minimal ops dashboard: content health from D1 (no external token). Traffic
+// metrics live in Cloudflare Web Analytics + Analytics Engine (linked below).
+app.get('/admin', async (c) => {
+  if (c.env.ADMIN_KEY && new URL(c.req.url).searchParams.get('key') !== c.env.ADMIN_KEY) {
+    return c.text('Unauthorized', 401);
+  }
+  const db = c.env.DB;
+  const s: any = await db
+    .prepare(
+      `SELECT COUNT(*) n, MIN(date_raw) mn, MAX(date_raw) mx,
+        SUM(CASE WHEN reflection IS NOT NULL AND reflection <> '' THEN 1 ELSE 0 END) refl,
+        SUM(CASE WHEN image_url IS NOT NULL AND image_url <> '' THEN 1 ELSE 0 END) img,
+        SUM(CASE WHEN COALESCE(json_array_length(lecturas), 0) >= 4 THEN 1 ELSE 0 END) feasts
+       FROM readings`,
+    )
+    .first();
+  const recent = await db
+    .prepare(`SELECT date_raw, title, image_url, reflection FROM readings ORDER BY date_raw DESC LIMIT 12`)
+    .all();
+  const n = s?.n || 0;
+  const pct = (v: number) => (n ? Math.round((v / n) * 100) : 0);
+  const esc = (t: unknown) => String(t ?? '').replace(/</g, '&lt;');
+  const tile = (label: string, value: string) =>
+    `<div class="tile"><div class="v">${value}</div><div class="l">${label}</div></div>`;
+  const rows = (recent.results as any[])
+    .map(
+      (r) => `<tr>
+        <td>${esc(r.date_raw).slice(0, 10)}</td>
+        <td>${r.image_url ? `<img src="${esc(r.image_url)}" alt="">` : '—'}</td>
+        <td>${esc(r.title).slice(0, 60)}</td>
+        <td>${r.reflection ? '✓' : '—'}</td></tr>`,
+    )
+    .join('');
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>DReading · panel</title>
+<style>
+  :root{--bg:#14172a;--panel:#1b1f36;--ink:#ece9e0;--muted:#9aa0b6;--accent:#6bbd93;--line:#2b3052}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:16px system-ui,sans-serif;padding:2rem 1.25rem}
+  .wrap{max-width:60rem;margin:0 auto}
+  h1{font-size:1.4rem;margin:0 0 .25rem} .sub{color:var(--muted);margin:0 0 1.5rem}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));gap:.8rem;margin-bottom:1.5rem}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:1rem;padding:1rem}
+  .tile .v{font-size:1.7rem;font-weight:700;color:var(--accent)} .tile .l{color:var(--muted);font-size:.85rem}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:1rem;overflow:hidden}
+  th,td{text-align:left;padding:.6rem .8rem;border-bottom:1px solid var(--line);font-size:.9rem}
+  th{color:var(--muted);text-transform:uppercase;font-size:.72rem;letter-spacing:.05em}
+  td img{height:34px;width:51px;object-fit:cover;border-radius:.3rem;display:block}
+  a{color:var(--accent)} .links{margin:1.5rem 0;color:var(--muted);font-size:.9rem}
+</style></head><body><div class="wrap">
+  <h1>DReading · panel de contenido</h1>
+  <p class="sub">Salud de la ingesta (D1). El tráfico (lecturas/día, país, vitals) vive en Web Analytics + Analytics Engine.</p>
+  <div class="tiles">
+    ${tile('Lecturas', String(n))}
+    ${tile('Desde', esc(s?.mn).slice(0, 10) || '—')}
+    ${tile('Hasta', esc(s?.mx).slice(0, 10) || '—')}
+    ${tile('Con reflexión', pct(s?.refl || 0) + '%')}
+    ${tile('Con imagen', pct(s?.img || 0) + '%')}
+    ${tile('Domingos/fiestas', String(s?.feasts || 0))}
+  </div>
+  <table><thead><tr><th>Fecha</th><th>Arte</th><th>Título</th><th>IA</th></tr></thead><tbody>${rows}</tbody></table>
+  <p class="links">Tráfico: <a href="https://dash.cloudflare.com/${''}?to=/:account/web-analytics">Web Analytics</a> ·
+  Eventos por endpoint/país: <a href="https://dash.cloudflare.com">Analytics Engine (dataset dreading_events)</a></p>
+</div></body></html>`;
+  return c.html(html);
 });
 
 // Serve the daily illustrations stored in R2, cached at the edge.
