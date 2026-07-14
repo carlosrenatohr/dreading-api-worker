@@ -8,9 +8,8 @@
     {
       "binding": "DB",
       "database_name": "dreading",
-      // Local dev/test (miniflare) ignores this id. Replace with the real id
-      // from `wrangler d1 create dreading` before deploying.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Local dev/test (miniflare) ignores this id; prod uses the real one.
+      "database_id": "326f8a72-e6fa-493d-9786-4674405a73ed",
       "migrations_dir": "migrations"
     }
   ]
