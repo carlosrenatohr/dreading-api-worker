@@ -1,0 +1,2 @@
+# Shared secret the scraper uses to POST /api/ingest. Copy to .dev.vars for local dev.
+INGEST_TOKEN=dev-ingest-token
