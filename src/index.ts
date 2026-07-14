@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { cache } from 'hono/cache';
 import { z } from 'zod';
 
 import { isYmd, clampPerPage, pageNum, cutoffFrom, rowToReading, readingToRow } from './lib';
@@ -18,6 +19,11 @@ const COLS =
 const app = new Hono<{ Bindings: Env }>();
 
 app.use('/api/*', cors());
+
+// Cache read responses at the edge (Cache API — free, cuts D1 reads). Content is
+// daily, so a short TTL is plenty; the daily write refreshes within the window.
+app.get('/api/v1/readings/*', cache({ cacheName: 'dreading-readings', cacheControl: 'public, max-age=600' }));
+app.get('/images/*', cache({ cacheName: 'dreading-images', cacheControl: 'public, max-age=86400' }));
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
