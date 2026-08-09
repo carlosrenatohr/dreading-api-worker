@@ -26,10 +26,23 @@ app.use('/api/*', cors());
 // before the cache middleware so cache hits are still counted. Privacy-first:
 // no PII, just aggregate usage.
 app.use('/api/v1/readings/*', async (c, next) => {
-  const country = (c.req.raw as any).cf?.country || 'XX';
+  const start = Date.now();
+  const cf = (c.req.raw as any).cf || {};
+  const country = cf.country || 'XX';
   const endpoint = new URL(c.req.url).pathname;
-  c.env.ANALYTICS?.writeDataPoint({ blobs: [endpoint, country], doubles: [1], indexes: [endpoint] });
+  const ua = c.req.header('user-agent') || 'unknown';
+  const referer = c.req.header('referer') || 'direct';
+  const ray = cf.ray || 'unknown';
+  const cacheStatus = cf.cacheStatus || 'unknown';
+
   await next();
+
+  const responseTimeMs = Date.now() - start;
+  c.env.ANALYTICS?.writeDataPoint({
+    blobs: [endpoint, country, ua, referer, ray, cacheStatus],
+    doubles: [1, responseTimeMs],
+    indexes: [endpoint, country],
+  });
 });
 
 // Cache read responses at the edge (Cache API — free, cuts D1 reads). Content is
