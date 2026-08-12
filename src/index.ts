@@ -41,7 +41,7 @@ app.use('/api/v1/readings/*', async (c, next) => {
   c.env.ANALYTICS?.writeDataPoint({
     blobs: [endpoint, country, ua, referer, ray, cacheStatus],
     doubles: [1, responseTimeMs],
-    indexes: [endpoint, country],
+    indexes: [endpoint],
   });
 });
 
