@@ -39,9 +39,10 @@ app.use('/api/v1/readings/*', async (c, next) => {
 
   const responseTimeMs = Date.now() - start;
   c.env.ANALYTICS?.writeDataPoint({
+    // Analytics Engine supports a single index; country goes in blobs.
     blobs: [endpoint, country, ua, referer, ray, cacheStatus],
     doubles: [1, responseTimeMs],
-    indexes: [endpoint, country],
+    indexes: [endpoint],
   });
 });
 
