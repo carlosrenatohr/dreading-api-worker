@@ -217,3 +217,19 @@ describe('GET /api/v2/readings', () => {
     expect(res.headers.get('location')).toContain('/api/v1/readings');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Analytics Engine regression — single index per data point
+// ---------------------------------------------------------------------------
+
+describe('Analytics Engine', () => {
+  it('sends exactly one index (not two) to writeDataPoint', async () => {
+    const writeDataPoint = vi.fn();
+    const envWithAnalytics = env({ ANALYTICS: { writeDataPoint } });
+    await app.request('/api/v1/readings/today', undefined, envWithAnalytics);
+    expect(writeDataPoint).toHaveBeenCalledOnce();
+    const call = writeDataPoint.mock.calls[0][0];
+    expect(Array.isArray(call.indexes)).toBe(true);
+    expect(call.indexes.length).toBe(1);
+  });
+});
