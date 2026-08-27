@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { cache } from 'hono/cache';
 import { z } from 'zod';
 
 import { isYmd, clampPerPage, pageNum, cutoffFrom, rowToReading, readingToRow } from './lib';
@@ -21,6 +20,29 @@ const COLS =
 const app = new Hono<{ Bindings: Env }>();
 
 app.use('/api/*', cors());
+
+// Simple per-IP rate limiter for public endpoints. In-memory map — Workers
+// isolate lifecycle means it resets on cold start, which is fine for abuse prevention.
+// Disabled when RATE_LIMIT env var is explicitly "0" (for tests).
+const hits = new Map<string, { count: number; resetAt: number }>();
+const RATE_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT = parseInt((globalThis as any).__RATE_LIMIT ?? '60', 10); // requests per window; 0 = disabled
+
+app.use('/api/v1/readings/*', async (c, next) => {
+  if (RATE_LIMIT <= 0) return next();
+  const ip = (c.req.raw as any).cf?.connectingIP || 'unknown';
+  const now = Date.now();
+  const entry = hits.get(ip);
+  if (!entry || now > entry.resetAt) {
+    hits.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+  } else {
+    entry.count++;
+    if (entry.count > RATE_LIMIT) {
+      return c.json({ ok: false, error: { code: 'rate_limited', message: 'Too many requests. Try again shortly.' } }, 429);
+    }
+  }
+  await next();
+});
 
 // Count each reading request (endpoint + country) in Workers Analytics Engine —
 // before the cache middleware so cache hits are still counted. Privacy-first:
@@ -48,8 +70,28 @@ app.use('/api/v1/readings/*', async (c, next) => {
 
 // Cache read responses at the edge (Cache API — free, cuts D1 reads). Content is
 // daily, so a short TTL is plenty; the daily write refreshes within the window.
-app.get('/api/v1/readings/*', cache({ cacheName: 'dreading-readings', cacheControl: 'public, max-age=600' }));
-app.get('/images/*', cache({ cacheName: 'dreading-images', cacheControl: 'public, max-age=86400' }));
+// Custom middleware: only cache successful (2xx) responses to avoid storing errors.
+const HAS_CACHES = typeof globalThis.caches !== 'undefined';
+
+async function edgeCache(c: any, next: any) {
+  await next();
+  if (!HAS_CACHES) return;
+  const res = c.res;
+  if (res.status >= 200 && res.status < 300) {
+    const copy = res.clone();
+    await caches.open('dreading-readings').then((cache) => cache.put(c.req.url, copy));
+  }
+}
+app.get('/api/v1/readings/*', edgeCache);
+app.get('/images/*', async (c: any, next: any) => {
+  await next();
+  if (!HAS_CACHES) return;
+  const res = c.res;
+  if (res.status >= 200 && res.status < 300) {
+    const copy = res.clone();
+    await caches.open('dreading-images').then((cache) => cache.put(c.req.url, copy));
+  }
+});
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
